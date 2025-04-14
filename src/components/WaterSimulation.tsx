@@ -61,8 +61,8 @@ export function WaterSimulation({ timeLeft }: WaterSimulationProps) {
     p5.clear();
     
     // Draw water background with gradient
-    const waterColor = p5.color(64, 164, 223);
-    waterColor.setAlpha(40);
+    const waterColor = p5.color(0, 183, 235);
+    waterColor.setAlpha(80);
     
     // Create gradient effect
     for (let y = height - waterLevel; y < height; y += 2) {

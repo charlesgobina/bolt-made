@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { puzzles } from './data/puzzles';
 import { Timer } from './components/Timer';
 import { EmojiDisplay } from './components/EmojiDisplay';
@@ -6,6 +6,15 @@ import { GuessInput } from './components/GuessInput';
 import { HintDisplay } from './components/HintDisplay';
 import { WaterSimulation } from './components/WaterSimulation';
 import { Trophy, RefreshCw } from 'lucide-react';
+
+interface soundType {
+  correct: HTMLAudioElement;
+  wrong: HTMLAudioElement;
+  hint: HTMLAudioElement;
+  tick: HTMLAudioElement;
+  timeUp: HTMLAudioElement;
+  combo: HTMLAudioElement;
+}
 
 function App() {
   const [currentPuzzleIndex, setCurrentPuzzleIndex] = useState(0);
@@ -15,6 +24,7 @@ function App() {
   const [revealedIndices, setRevealedIndices] = useState<number[]>([]);
   const [gameStatus, setGameStatus] = useState<'playing' | 'won' | 'lost'>('playing');
   const [feedback, setFeedback] = useState('');
+  const [isSoundOn, setIsSoundOn] = useState(true);
 
   const currentPuzzle = puzzles[currentPuzzleIndex];
 
@@ -31,7 +41,7 @@ function App() {
     const correctWordCount = guessWords.filter(word => 
       correctWords.includes(word)
     ).length;
-
+  
     if (guess === currentPuzzle.answer) {
       const timeBonus = Math.floor(timeLeft * 0.5);
       const hintPenalty = (3 - hintsRemaining) * 5;
@@ -53,12 +63,60 @@ function App() {
       }
     } else if (correctWordCount > 0) {
       setFeedback(`Close! You got ${correctWordCount} word(s) right`);
+      // Clear feedback after 3 seconds for wrong answers
+      setTimeout(() => {
+        setFeedback('');
+      }, 3000);
     } else {
       setFeedback('Try again!');
+      // Clear feedback after 3 seconds for wrong answers
+      setTimeout(() => {
+        setFeedback('');
+      }, 3000);
     }
   };
 
+  const [sounds] = useState<Record<string, HTMLAudioElement>>(() => ({
+    correct: new Audio('/sounds/correct.mp3'),
+    wrong: new Audio('/sounds/wrong.mp3'),
+    hint: new Audio('/sounds/hint.mp3'),
+    tick: new Audio('/sounds/tick.mp3'),
+    timeUp: new Audio('/sounds/timeup.mp3'),
+    combo: new Audio('/sounds/combo.mp3')
+  }));
+
+  const playSound = useCallback((soundName: keyof typeof sounds) => {
+    if (!isSoundOn) return;
+    
+    const sound = sounds[soundName];
+    if (sound) {
+      // Reset the audio to the beginning if it's already playing
+      sound.currentTime = 0;
+      sound.play().catch(e => console.error("Error playing sound:", e));
+    }
+  }, [isSoundOn, sounds]);
+
+  // // Add sound usage to feedback and game events
+  // useEffect(() => {
+  //   if (timeLeft === 0 && gameStatus === 'playing') {
+  //     playSound('timeUp');
+  //     setGameStatus('lost');
+  //   }
+  // }, [timeLeft, gameStatus, playSound]);
+
+  // // paly sound on correct guess
+  useEffect(() => {
+    if (feedback.startsWith('Correct')) {
+      playSound('correct');
+    } else if (feedback.startsWith('Close')) {
+      playSound('wrong');
+    } else if (feedback.startsWith('Try again')) {
+      playSound('wrong');
+    }
+  }, [feedback, playSound]);
+
   const requestHint = () => {
+    playSound('hint');
     if (hintsRemaining > 0) {
       const unrevealedIndices = currentPuzzle.answer
         .split('')
@@ -112,7 +170,7 @@ function App() {
         <div className="relative z-10 space-y-12">
           <div className="flex justify-between items-center">
             <div className="text-2xl font-bold text-purple-500">Score: {score}</div>
-            <Timer timeLeft={timeLeft} setTimeLeft={setTimeLeft} isActive={gameStatus === 'playing'} />
+            <Timer playSound={playSound} timeLeft={timeLeft} setTimeLeft={setTimeLeft} isActive={gameStatus === 'playing'} />
           </div>
           
           <EmojiDisplay 
@@ -127,13 +185,15 @@ function App() {
             onRequestHint={requestHint}
           />
           
-          <div className="flex flex-col items-center gap-6">
+          <div className="flex flex-col items-center gap-6 py-6">
             <GuessInput 
               onSubmit={handleGuess}
               disabled={gameStatus !== 'playing'}
+              currentPuzzle={currentPuzzle}
             />
+            
             {feedback && (
-              <p className={`text-lg font-semibold ${
+              <p className={`text-lg absolute bottom-5 pb-4 font-semibold ${
                 feedback.startsWith('Correct') ? 'text-green-500' : 
                 feedback.startsWith('Close') ? 'text-yellow-500' : 
                 'text-red-500'

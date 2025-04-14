@@ -5,9 +5,10 @@ interface TimerProps {
   timeLeft: number;
   setTimeLeft: (time: number) => void;
   isActive: boolean;
+  playSound: (sound: string) => void;
 }
 
-export function Timer({ timeLeft, setTimeLeft, isActive }: TimerProps) {
+export function Timer({ timeLeft, setTimeLeft, isActive, playSound }: TimerProps) {
   useEffect(() => {
     let interval: number;
 
@@ -15,6 +16,16 @@ export function Timer({ timeLeft, setTimeLeft, isActive }: TimerProps) {
       interval = setInterval(() => {
         setTimeLeft(timeLeft - 1);
       }, 1000);
+    }
+
+    if (timeLeft > 0 && timeLeft % 10 === 0) {
+      // Play tick sound here
+      playSound('tick'); 
+    }
+
+    if (timeLeft === 0) {
+      // Play time-up sound here
+      playSound('timeUp');
     }
 
     return () => clearInterval(interval);
