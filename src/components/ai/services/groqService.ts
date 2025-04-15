@@ -1,12 +1,10 @@
 // src/services/groqService.ts
 import { Groq } from "groq-sdk";
-import dotenv from "dotenv";
-
-dotenv.config();
 
 // Initialize Groq client
 const groq = new Groq({
-  apiKey: process.env.REACT_APP_GROQ_API_KEY || "",
+  apiKey: import.meta.env.VITE_GROQ_API_KEY || "",
+  dangerouslyAllowBrowser: true,
 });
 
 // Default model - LLaMA3-8B is one of the most cost-effective
@@ -76,11 +74,11 @@ export async function generateEmojiPuzzleBatch(
   count: number = 5
 ): Promise<AIEmojiPuzzle[]> {
   try {
-    const prompt = `Create ${count} emoji puzzles for an emoji guessing game. 
+    const prompt = `Create ${count} emoji puzzles for an emoji guessing game. Start easy and progressively make them harder. 
     For each puzzle, provide:
     1. A category (choose from: Movies, Phrases, Concepts, Books, Famous People, Brands, Song Titles, TV Shows, Food & Drink, Idioms, Historical Events, Technology Terms, Sports, Science, Geography)
     2. The answer (a term, phrase, title, or name)
-    3. 2-5 emojis that represent the answer
+    3. 2-5 emojis depending on the complexity of the answer.
 
     Format the response as a valid JSON array: 
     [

@@ -85,7 +85,7 @@ function GameContent() {
   useEffect(() => {
     if (currentPuzzleIndex === -1) {
       // Randomly decide if we want to start with an AI puzzle (25% chance)
-      const useAIPuzzle = aiEnabled && Math.random() < 0.25;
+      const useAIPuzzle = aiEnabled && Math.random() < 0.95;
       
       if (useAIPuzzle) {
         const aiPuzzle = getNextAIPuzzle();
