@@ -82,7 +82,7 @@ export function GuessInput({ currentPuzzle, onSubmit, disabled }: GuessInputProp
           placeholder="Type your guess..."
           disabled={disabled}
           className="relative w-full px-4 py-3 rounded-lg border-2 border-purple-200 focus:border-purple-500 focus:outline-none disabled:bg-gray-100 disabled:cursor-not-allowed bg-transparent"
-          style={{ zIndex: 1 }}
+          style={{ zIndex: 1, fontWeight: 'bold' }}
         />
         
         <button
