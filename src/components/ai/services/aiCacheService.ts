@@ -14,8 +14,10 @@ interface CachedItem<T> {
 class AIContentCache {
   private puzzles: CachedItem<AIEmojiPuzzle>[] = [];
   private moderatorResponses: CachedItem<ModeratorResponse>[] = [];
+  private usedPuzzleRegistry: Set<string> = new Set(); // Track used puzzles
   private isGeneratingPuzzles = false;
   private isGeneratingResponses = false;
+  private qualityThreshold = 3; // Minimum emojis required for a quality puzzle
 
   constructor() {
     // Load from localStorage on initialization
@@ -36,9 +38,35 @@ class AIContentCache {
       return null;
     }
     
-    // Get and remove first puzzle from cache
-    const puzzle = this.puzzles.shift();
+    // Find a puzzle that hasn't been used before
+    const unusedPuzzleIndex = this.puzzles.findIndex(item => 
+      !this.usedPuzzleRegistry.has(this.createPuzzleKey(item.data))
+    );
+    
+    // If all puzzles have been used, generate new ones
+    if (unusedPuzzleIndex === -1) {
+      console.warn("All puzzles have been used, regenerating");
+      this.ensurePuzzleCache(true); // Force regeneration
+      
+      // Get the first available puzzle as fallback
+      const puzzle = this.puzzles.shift();
+      this.saveToStorage();
+      
+      if (puzzle) {
+        // Mark this puzzle as used
+        this.usedPuzzleRegistry.add(this.createPuzzleKey(puzzle.data));
+        return puzzle.data;
+      }
+      
+      return null;
+    }
+    
+    // Get and remove the unused puzzle
+    const [puzzle] = this.puzzles.splice(unusedPuzzleIndex, 1);
     this.saveToStorage();
+    
+    // Mark this puzzle as used
+    this.usedPuzzleRegistry.add(this.createPuzzleKey(puzzle.data));
     
     // If running low on puzzles, generate more in the background
     if (this.puzzles.length < MIN_PUZZLES_IN_CACHE / 2) {
@@ -46,6 +74,11 @@ class AIContentCache {
     }
     
     return puzzle?.data || null;
+  }
+
+  // Create a unique key for a puzzle to track if it's been used
+  private createPuzzleKey(puzzle: AIEmojiPuzzle): string {
+    return `${puzzle.category}:${puzzle.answer.toLowerCase()}`;
   }
 
   // Get moderator responses from cache
@@ -63,9 +96,34 @@ class AIContentCache {
     return this.moderatorResponses[randomIndex].data;
   }
 
+  // Filter puzzles for quality
+  private isQualityPuzzle(puzzle: AIEmojiPuzzle): boolean {
+    // Must have minimum number of emojis
+    if (countEmojis(puzzle.emojis) < this.qualityThreshold) {
+      return false;
+    }
+    
+    // Avoid duplicate emojis in the same puzzle
+    const uniqueEmojis = new Set(Array.from(puzzle.emojis).filter(c => isEmoji(c)));
+    if (uniqueEmojis.size < countEmojis(puzzle.emojis)) {
+      return false;
+    }
+    
+    // Avoid using puzzles we've seen before
+    if (this.usedPuzzleRegistry.has(this.createPuzzleKey(puzzle))) {
+      return false;
+    }
+    
+    return true;
+  }
+
   // Ensure we have enough puzzles in cache
-  async ensurePuzzleCache(): Promise<void> {
-    if (this.isGeneratingPuzzles || this.puzzles.length >= MIN_PUZZLES_IN_CACHE) {
+  async ensurePuzzleCache(forceRegenerate: boolean = false): Promise<void> {
+    if (this.isGeneratingPuzzles && !forceRegenerate) {
+      return;
+    }
+    
+    if (this.puzzles.length >= MIN_PUZZLES_IN_CACHE && !forceRegenerate) {
       return;
     }
     
@@ -73,20 +131,25 @@ class AIContentCache {
     
     try {
       console.log("Generating new puzzles...");
-      const puzzlesToGenerate = MIN_PUZZLES_IN_CACHE - this.puzzles.length;
-      const newPuzzles = await generateEmojiPuzzleBatch(puzzlesToGenerate);
+      const puzzlesToGenerate = Math.max(MIN_PUZZLES_IN_CACHE - this.puzzles.length, 5);
+      
+      // Request extra puzzles to account for quality filtering
+      const newPuzzles = await generateEmojiPuzzleBatch(puzzlesToGenerate * 2);
       
       if (newPuzzles && newPuzzles.length > 0) {
+        // Filter for quality puzzles
+        const qualityPuzzles = newPuzzles.filter(puzzle => this.isQualityPuzzle(puzzle));
+        
         const currentTime = Date.now();
         this.puzzles.push(
-          ...newPuzzles.map(puzzle => ({
+          ...qualityPuzzles.map(puzzle => ({
             data: puzzle,
             timestamp: currentTime
           }))
         );
         
         this.saveToStorage();
-        console.log(`Added ${newPuzzles.length} new puzzles to cache`);
+        console.log(`Added ${qualityPuzzles.length} new quality puzzles to cache`);
       } else {
         console.error("Failed to generate new puzzles");
       }
@@ -149,6 +212,7 @@ class AIContentCache {
     try {
       localStorage.setItem('emojiGamePuzzleCache', JSON.stringify(this.puzzles));
       localStorage.setItem('emojiGameResponseCache', JSON.stringify(this.moderatorResponses));
+      localStorage.setItem('emojiGameUsedPuzzles', JSON.stringify(Array.from(this.usedPuzzleRegistry)));
     } catch (error) {
       console.error("Error saving cache to storage:", error);
     }
@@ -159,6 +223,7 @@ class AIContentCache {
     try {
       const puzzleCache = localStorage.getItem('emojiGamePuzzleCache');
       const responseCache = localStorage.getItem('emojiGameResponseCache');
+      const usedPuzzleRegistry = localStorage.getItem('emojiGameUsedPuzzles');
       
       if (puzzleCache) {
         this.puzzles = JSON.parse(puzzleCache);
@@ -168,11 +233,25 @@ class AIContentCache {
         this.moderatorResponses = JSON.parse(responseCache);
       }
       
-      console.log(`Loaded ${this.puzzles.length} puzzles and ${this.moderatorResponses.length} responses from storage`);
+      if (usedPuzzleRegistry) {
+        this.usedPuzzleRegistry = new Set(JSON.parse(usedPuzzleRegistry));
+      }
+      
+      console.log(`Loaded ${this.puzzles.length} puzzles, ${this.moderatorResponses.length} responses, and ${this.usedPuzzleRegistry.size} used puzzles from storage`);
     } catch (error) {
       console.error("Error loading cache from storage:", error);
     }
   }
+}
+
+// Helper functions for emoji quality checks
+function isEmoji(char: string): boolean {
+  const emojiRegex = /\p{Emoji}/u;
+  return emojiRegex.test(char);
+}
+
+function countEmojis(str: string): number {
+  return Array.from(str).filter(c => isEmoji(c)).length;
 }
 
 // Create and export a singleton instance

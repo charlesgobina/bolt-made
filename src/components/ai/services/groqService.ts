@@ -35,13 +35,20 @@ export async function generateEmojiPuzzle(
       messages: [
         {
           role: "system",
-          content: "You are an emoji game creator. Generate emojis that represent specific phrases or concepts."
+          content: "You are an emoji game creator expert. Generate precise, descriptive emojis that represent specific phrases or concepts clearly."
         },
         {
           role: "user",
-          content: `Create emojis to represent "${answer}" in the category "${category}". 
-          Return ONLY 2-5 emojis without any explanation or additional text. 
-          The emojis should be challenging but fair to guess.`
+          content: `Create a sequence of 3-5 emojis to represent "${answer}" in the category "${category}".
+          
+          Requirements:
+          - Focus on visual storytelling - each emoji should add meaning
+          - Include distinctive details that differentiate this from similar concepts
+          - Use emojis that represent key visual elements of the answer
+          - Avoid repetitive or redundant emojis
+          - The sequence should tell a story or represent components in a logical order
+          
+          Return ONLY the emojis without any explanation or additional text.`
         }
       ],
       temperature: 0.7,
@@ -74,49 +81,52 @@ export async function generateEmojiPuzzleBatch(
   count: number = 5
 ): Promise<AIEmojiPuzzle[]> {
   try {
-    const prompt = `Create ${count} emoji puzzles for an emoji guessing game that are visually intuitive and fun to solve.
+    const prompt = `Create ${count} high-quality emoji puzzles for a guessing game. Each puzzle must use descriptive and distinctive emojis.
 
 For each puzzle:
-1. Choose a category from: Movies, TV Shows, Books, Famous Places, Food & Drink, Sports, Animals, Occupations, Hobbies, Transportation, Weather, Holidays, Fairy Tales, Inventions, or Music.
+1. Choose a specific category from: Movies, TV Shows, Books, Famous Places, Food & Drink, Sports, Animals, Occupations, Hobbies, Transportation, Technology, Holidays, Fairy Tales, Inventions, Music, Historical Events, or Famous People.
 
-2. Select a specific, well-known answer within that category that can be represented through concrete visual elements (avoid abstract concepts).
+2. Select a concrete, well-known answer within that category that has distinctive visual elements. Avoid generic or abstract concepts.
 
-3. Create a sequence of 2-5 emojis that:
-   - Use only standard emojis available on all platforms
-   - Represent literal objects, characters, or elements from the answer
-   - Can be combined to form a visual story or representation
-   - Avoid abstract symbols that require complex interpretation
-   - Are arranged in a logical sequence that helps guide the player to the answer
+3. Create a sequence of 3-5 emojis that:
+   - Tell a visual story that guides the player to the answer
+   - Include specific details that make the answer unique and identifiable
+   - Represent key components or visual elements of the answer
+   - Use emojis in a logical sequence or relationship
+   - Avoid using the same emoji twice in one puzzle
 
-Examples of good puzzles:
-- Category: Movies, Answer: "Finding Nemo", Emojis: "🐠🔍🌊"
-- Category: Food & Drink, Answer: "Peanut Butter & Jelly Sandwich", Emojis: "🥜🧈🍇🍞"
-- Category: Sports, Answer: "Ice Hockey", Emojis: "🏒🥅❄️"
+Quality Criteria:
+- Emojis should be precise enough that once the answer is known, it makes perfect sense
+- Each emoji should contribute meaningful information to the puzzle
+- The combination should be distinctive enough to lead to exactly one answer
+- The difficulty should be moderate - challenging but solvable
 
-Format the response as a valid JSON array:
-[
-  {
-    "category": "category name",
-    "answer": "answer text",
-    "emojis": "emoji sequence"
-  }
-]
+Format the response as a valid JSON object with a "puzzles" array:
+{
+  "puzzles": [
+    {
+      "category": "category name",
+      "answer": "answer text",
+      "emojis": "emoji sequence"
+    }
+  ]
+}
 
-Make sure each puzzle is solvable but provides just enough challenge to be engaging.`;
+Make each puzzle descriptive and memorable.`;
 
     const completion = await groq.chat.completions.create({
       model: DEFAULT_MODEL,
       messages: [
         {
           role: "system",
-          content: "You are an emoji game creator. Generate fun and challenging emoji puzzles."
+          content: "You are an expert emoji puzzle designer. You create highly descriptive, visually intuitive emoji sequences that represent concepts clearly."
         },
         {
           role: "user",
           content: prompt
         }
       ],
-      temperature: 0.8,
+      temperature: 0.7,
       max_tokens: 1000,
       response_format: { type: "json_object" }
     });
@@ -127,12 +137,14 @@ Make sure each puzzle is solvable but provides just enough challenge to be engag
       const parsed = JSON.parse(content);
       const puzzles = parsed.puzzles || [];
 
-      // Filter out any invalid puzzles
+      // Filter out any invalid puzzles or ones with insufficient emojis
       return puzzles.filter((puzzle: any) =>
         puzzle.category &&
         puzzle.answer &&
         puzzle.emojis &&
-        containsOnlyEmojis(puzzle.emojis)
+        containsOnlyEmojis(puzzle.emojis) &&
+        countEmojis(puzzle.emojis) >= 3 && 
+        countEmojis(puzzle.emojis) <= 5
       );
     } catch (error) {
       console.error("Error parsing AI response:", error);
@@ -237,7 +249,14 @@ export async function getAIHintForPuzzle(
 
 // Helper function to check if a string contains only emojis
 function containsOnlyEmojis(str: string): boolean {
-  // Basic emoji validation - this is a simplified check
+  // Enhanced emoji validation
   const emojiRegex = /^[\p{Emoji}\s]+$/u;
-  return emojiRegex.test(str) && str.length <= 20;
+  return emojiRegex.test(str) && str.length <= 30 && str.length > 0;
+}
+
+// Helper function to count actual emojis in a string
+function countEmojis(str: string): number {
+  const emojiRegex = /\p{Emoji}/gu;
+  const matches = str.match(emojiRegex);
+  return matches ? matches.length : 0;
 }

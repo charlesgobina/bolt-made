@@ -35,9 +35,20 @@ export const GameAIProvider: React.FC<GameAIProviderProps> = ({ children }) => {
   const [moderatorResponses, setModeratorResponses] = useState<ModeratorResponse | null>(null);
   const [aiEnabled, setAIEnabled] = useState(true);
   const [hintCache, setHintCache] = useState<Record<string, string>>({});
+  const [usedAnswers, setUsedAnswers] = useState<Set<string>>(new Set());
 
   // Initialize AI content on component mount
   useEffect(() => {
+    // Try to load used answers from localStorage
+    try {
+      const storedUsedAnswers = localStorage.getItem('emojiGameUsedAnswers');
+      if (storedUsedAnswers) {
+        setUsedAnswers(new Set(JSON.parse(storedUsedAnswers)));
+      }
+    } catch (e) {
+      console.error("Failed to load used answers:", e);
+    }
+
     // Try to get default responses immediately
     const response = aiContentCache.getModeratorResponse();
     if (response) {
@@ -51,7 +62,7 @@ export const GameAIProvider: React.FC<GameAIProviderProps> = ({ children }) => {
       
       for (let i = 0; i < 5; i++) {
         const puzzle = aiContentCache.getPuzzle();
-        if (puzzle) {
+        if (puzzle && isQualityPuzzle(puzzle)) {
           puzzles.push(puzzle);
         }
       }
@@ -79,27 +90,100 @@ export const GameAIProvider: React.FC<GameAIProviderProps> = ({ children }) => {
     return () => clearInterval(intervalId);
   }, []);
 
+  // Save used answers to localStorage when they change
+  useEffect(() => {
+    try {
+      localStorage.setItem('emojiGameUsedAnswers', JSON.stringify(Array.from(usedAnswers)));
+    } catch (e) {
+      console.error("Failed to save used answers:", e);
+    }
+  }, [usedAnswers]);
+
+  // Quality assessment function
+  const isQualityPuzzle = (puzzle: AIEmojiPuzzle): boolean => {
+    if (!puzzle) return false;
+
+    // Check if answer has already been used
+    if (usedAnswers.has(puzzle.answer.toLowerCase())) {
+      return false;
+    }
+
+    // Check emoji count
+    const emojiCount = countEmojis(puzzle.emojis);
+    if (emojiCount < 3 || emojiCount > 5) {
+      return false;
+    }
+
+    // Check for duplicate emojis in the same puzzle
+    const uniqueEmojis = new Set(Array.from(puzzle.emojis).filter(c => isEmoji(c)));
+    if (uniqueEmojis.size < emojiCount * 0.8) { // Allow some flexibility, but mostly unique
+      return false;
+    }
+
+    // Check that the answer is not too short or too long
+    if (puzzle.answer.length < 3 || puzzle.answer.length > 30) {
+      return false;
+    }
+
+    return true;
+  };
+
+  // Helper function to count actual emojis in a string
+  const countEmojis = (str: string): number => {
+    const emojiRegex = /\p{Emoji}/gu;
+    const matches = str.match(emojiRegex);
+    return matches ? matches.length : 0;
+  };
+
+  // Helper function to check if a character is an emoji
+  const isEmoji = (char: string): boolean => {
+    const emojiRegex = /\p{Emoji}/u;
+    return emojiRegex.test(char);
+  };
+
   // Get the next AI puzzle
   const getNextAIPuzzle = (): AIEmojiPuzzle | null => {
     if (!aiEnabled) return null;
     
     // Check if we have puzzles in our state first
     if (aiPuzzles.length > 0) {
-      const [nextPuzzle, ...remainingPuzzles] = aiPuzzles;
-      setAIPuzzles(remainingPuzzles);
-      return nextPuzzle;
+      // Find first quality puzzle
+      const qualityPuzzleIndex = aiPuzzles.findIndex(isQualityPuzzle);
+      
+      if (qualityPuzzleIndex !== -1) {
+        // Extract the puzzle and update the state
+        const [nextPuzzle, ...remainingPuzzles] = aiPuzzles.filter((_, i) => i !== qualityPuzzleIndex);
+        setAIPuzzles(remainingPuzzles);
+        
+        // Mark this answer as used
+        setUsedAnswers(prev => new Set([...prev, nextPuzzle.answer.toLowerCase()]));
+        
+        return nextPuzzle;
+      }
     }
     
     // Otherwise try to get one directly from cache
-    const puzzle = aiContentCache.getPuzzle();
+    let attempts = 0;
+    let puzzle = null;
+    
+    // Try up to 3 times to get a quality puzzle
+    while (attempts < 3) {
+      puzzle = aiContentCache.getPuzzle();
+      if (puzzle && isQualityPuzzle(puzzle)) {
+        // Mark this answer as used
+        setUsedAnswers(prev => new Set([...prev, puzzle!.answer.toLowerCase()]));
+        break;
+      }
+      attempts++;
+    }
     
     // Refill our state cache in the background if we're running low
     if (aiPuzzles.length < 3) {
       setTimeout(() => {
         const newPuzzles: AIEmojiPuzzle[] = [];
-        for (let i = 0; i < 3; i++) {
+        for (let i = 0; i < 5; i++) {
           const puzzle = aiContentCache.getPuzzle();
-          if (puzzle) {
+          if (puzzle && isQualityPuzzle(puzzle)) {
             newPuzzles.push(puzzle);
           }
         }
@@ -144,7 +228,6 @@ export const GameAIProvider: React.FC<GameAIProviderProps> = ({ children }) => {
   };
 
   // Get an AI-generated hint for the current puzzle
-  // Modified to accept a callback that will be called once the hint is ready
   const getAIHint = (correctAnswer: string, userGuess: string, category: string, callback: (hint: string) => void): void => {
     if (!aiEnabled) {
       // Provide a simple hint if AI is disabled
