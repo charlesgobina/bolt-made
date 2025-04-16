@@ -1,13 +1,14 @@
 // src/components/GameAIProvider.tsx
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { aiContentCache } from '../components/ai/services/aiCacheService';
-import { AIEmojiPuzzle, ModeratorResponse } from '../components/ai/services/groqService';
+import { AIEmojiPuzzle, ModeratorResponse, getAIHintForPuzzle } from '../components/ai/services/groqService';
 
 interface GameAIContextType {
   loading: boolean;
   aiPuzzles: AIEmojiPuzzle[];
   getNextAIPuzzle: () => AIEmojiPuzzle | null;
   getModeratorResponse: (type: 'correct' | 'close' | 'wrong') => string;
+  getAIHint: (correctAnswer: string, userGuess: string, category: string, callback: (hint: string) => void) => void;
   aiEnabled: boolean;
   toggleAI: () => void;
 }
@@ -17,6 +18,7 @@ const GameAIContext = createContext<GameAIContextType>({
   aiPuzzles: [],
   getNextAIPuzzle: () => null,
   getModeratorResponse: () => '',
+  getAIHint: () => {},
   aiEnabled: true,
   toggleAI: () => {},
 });
@@ -32,6 +34,7 @@ export const GameAIProvider: React.FC<GameAIProviderProps> = ({ children }) => {
   const [aiPuzzles, setAIPuzzles] = useState<AIEmojiPuzzle[]>([]);
   const [moderatorResponses, setModeratorResponses] = useState<ModeratorResponse | null>(null);
   const [aiEnabled, setAIEnabled] = useState(true);
+  const [hintCache, setHintCache] = useState<Record<string, string>>({});
 
   // Initialize AI content on component mount
   useEffect(() => {
@@ -43,10 +46,10 @@ export const GameAIProvider: React.FC<GameAIProviderProps> = ({ children }) => {
     
     // Try to load initial puzzles
     const loadInitialPuzzles = async () => {
-      // Try to get 3 puzzles for immediate use
+      // Try to get 5 puzzles for immediate use
       const puzzles: AIEmojiPuzzle[] = [];
       
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 5; i++) {
         const puzzle = aiContentCache.getPuzzle();
         if (puzzle) {
           puzzles.push(puzzle);
@@ -88,7 +91,26 @@ export const GameAIProvider: React.FC<GameAIProviderProps> = ({ children }) => {
     }
     
     // Otherwise try to get one directly from cache
-    return aiContentCache.getPuzzle();
+    const puzzle = aiContentCache.getPuzzle();
+    
+    // Refill our state cache in the background if we're running low
+    if (aiPuzzles.length < 3) {
+      setTimeout(() => {
+        const newPuzzles: AIEmojiPuzzle[] = [];
+        for (let i = 0; i < 3; i++) {
+          const puzzle = aiContentCache.getPuzzle();
+          if (puzzle) {
+            newPuzzles.push(puzzle);
+          }
+        }
+        
+        if (newPuzzles.length > 0) {
+          setAIPuzzles(prev => [...prev, ...newPuzzles]);
+        }
+      }, 100);
+    }
+    
+    return puzzle;
   };
 
   // Get a moderator response for the current feedback type
@@ -121,6 +143,52 @@ export const GameAIProvider: React.FC<GameAIProviderProps> = ({ children }) => {
         : 'Not quite, give it another shot!';
   };
 
+  // Get an AI-generated hint for the current puzzle
+  // Modified to accept a callback that will be called once the hint is ready
+  const getAIHint = (correctAnswer: string, userGuess: string, category: string, callback: (hint: string) => void): void => {
+    if (!aiEnabled) {
+      // Provide a simple hint if AI is disabled
+      const simpleHint = "Think about what these emojis might represent together. Look for themes or connections.";
+      callback(simpleHint);
+      return;
+    }
+    
+    // Create a cache key from the answer and guess
+    const cacheKey = `${correctAnswer}|${userGuess}`;
+    
+    // Check if we already have a hint for this combination
+    if (hintCache[cacheKey]) {
+      callback(hintCache[cacheKey]);
+      return;
+    }
+    
+    // If we don't have a cached hint, generate one
+    const placeholder = "I'm thinking of a clever hint for you...";
+    callback(placeholder);
+    
+    // Generate hint in the background
+    const generateHint = async () => {
+      try {
+        const hint = await getAIHintForPuzzle(correctAnswer, userGuess, category);
+        const finalHint = hint || "Try focusing on what these emojis might represent when combined. Look for wordplay or connections between them.";
+        
+        // Update the cache
+        setHintCache(prev => ({
+          ...prev,
+          [cacheKey]: finalHint
+        }));
+        
+        // Call the callback with the new hint
+        callback(finalHint);
+      } catch (error) {
+        console.error("Error generating hint:", error);
+        callback("Focus on what the emojis mean as a combination, not individually.");
+      }
+    };
+    
+    generateHint();
+  };
+
   // Toggle AI features on/off
   const toggleAI = () => {
     setAIEnabled(!aiEnabled);
@@ -133,6 +201,7 @@ export const GameAIProvider: React.FC<GameAIProviderProps> = ({ children }) => {
         aiPuzzles,
         getNextAIPuzzle,
         getModeratorResponse,
+        getAIHint,
         aiEnabled,
         toggleAI,
       }}

@@ -49,7 +49,7 @@ export async function generateEmojiPuzzle(
     });
 
     const emojis = completion.choices[0]?.message?.content?.trim() || "";
-    
+
     // Validate that we got actual emojis
     if (!emojis || !containsOnlyEmojis(emojis)) {
       console.error("Invalid emoji response from AI");
@@ -74,20 +74,35 @@ export async function generateEmojiPuzzleBatch(
   count: number = 5
 ): Promise<AIEmojiPuzzle[]> {
   try {
-    const prompt = `Create ${count} emoji puzzles for an emoji guessing game. Start easy and progressively make them harder. 
-    For each puzzle, provide:
-    1. A category (choose from: Movies, Phrases, Concepts, Books, Famous People, Brands, Song Titles, TV Shows, Food & Drink, Idioms, Historical Events, Technology Terms, Sports, Science, Geography)
-    2. The answer (a term, phrase, title, or name)
-    3. 2-5 emojis depending on the complexity of the answer.
+    const prompt = `Create ${count} emoji puzzles for an emoji guessing game that are visually intuitive and fun to solve.
 
-    Format the response as a valid JSON array: 
-    [
-      {
-        "category": "category name",
-        "answer": "answer text",
-        "emojis": "emoji sequence"
-      }
-    ]`;
+For each puzzle:
+1. Choose a category from: Movies, TV Shows, Books, Famous Places, Food & Drink, Sports, Animals, Occupations, Hobbies, Transportation, Weather, Holidays, Fairy Tales, Inventions, or Music.
+
+2. Select a specific, well-known answer within that category that can be represented through concrete visual elements (avoid abstract concepts).
+
+3. Create a sequence of 2-5 emojis that:
+   - Use only standard emojis available on all platforms
+   - Represent literal objects, characters, or elements from the answer
+   - Can be combined to form a visual story or representation
+   - Avoid abstract symbols that require complex interpretation
+   - Are arranged in a logical sequence that helps guide the player to the answer
+
+Examples of good puzzles:
+- Category: Movies, Answer: "Finding Nemo", Emojis: "🐠🔍🌊"
+- Category: Food & Drink, Answer: "Peanut Butter & Jelly Sandwich", Emojis: "🥜🧈🍇🍞"
+- Category: Sports, Answer: "Ice Hockey", Emojis: "🏒🥅❄️"
+
+Format the response as a valid JSON array:
+[
+  {
+    "category": "category name",
+    "answer": "answer text",
+    "emojis": "emoji sequence"
+  }
+]
+
+Make sure each puzzle is solvable but provides just enough challenge to be engaging.`;
 
     const completion = await groq.chat.completions.create({
       model: DEFAULT_MODEL,
@@ -107,16 +122,16 @@ export async function generateEmojiPuzzleBatch(
     });
 
     const content = completion.choices[0]?.message?.content || "";
-    
+
     try {
       const parsed = JSON.parse(content);
       const puzzles = parsed.puzzles || [];
-      
+
       // Filter out any invalid puzzles
-      return puzzles.filter((puzzle: any) => 
-        puzzle.category && 
-        puzzle.answer && 
-        puzzle.emojis && 
+      return puzzles.filter((puzzle: any) =>
+        puzzle.category &&
+        puzzle.answer &&
+        puzzle.emojis &&
         containsOnlyEmojis(puzzle.emojis)
       );
     } catch (error) {
@@ -158,7 +173,7 @@ export async function generateModeratorResponses(): Promise<ModeratorResponse | 
     });
 
     const content = completion.choices[0]?.message?.content || "";
-    
+
     try {
       const responses = JSON.parse(content);
       if (responses.correct && responses.close && responses.wrong) {
@@ -171,6 +186,51 @@ export async function generateModeratorResponses(): Promise<ModeratorResponse | 
     }
   } catch (error) {
     console.error("Error generating moderator responses:", error);
+    return null;
+  }
+}
+
+/**
+ * Generate an AI hint for a puzzle based on user's guess
+ */
+export async function getAIHintForPuzzle(
+  correctAnswer: string,
+  userGuess: string,
+  category: string
+): Promise<string | null> {
+  try {
+    const completion = await groq.chat.completions.create({
+      model: DEFAULT_MODEL,
+      messages: [
+        {
+          role: "system",
+          content: "You are a helpful but indirect hint giver for an emoji guessing game. Your goal is to guide players toward the correct answer without giving it away completely."
+        },
+        {
+          role: "user",
+          content: `
+            In an emoji guessing game, a player is trying to guess the answer to a puzzle.
+            
+            Category: ${category}
+            Correct Answer: ${correctAnswer}
+            Player's Guess: ${userGuess}
+            
+            Please provide a helpful hint that:
+            1. Suggests a different angle to approach the puzzle
+            2. Points out what their guess might be missing
+            3. Provides a subtle clue without directly revealing the answer
+            
+            Keep the hint under 25 words, conversational, and encouraging.
+          `
+        }
+      ],
+      temperature: 0.7,
+      max_tokens: 100,
+    });
+
+    return completion.choices[0]?.message?.content?.trim() || null;
+  } catch (error) {
+    console.error("Error generating AI hint:", error);
     return null;
   }
 }

@@ -1,22 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { puzzles } from './data/puzzles';
 import { Timer } from './components/Timer';
 import { EmojiDisplay } from './components/EmojiDisplay';
 import { GuessInput } from './components/GuessInput';
 import { HintDisplay } from './components/HintDisplay';
 import { WaterSimulation } from './components/WaterSimulation';
 import { Confetti } from './components/animations/Confetti';
-import { Trophy, RefreshCw, Volume2, VolumeX, Zap } from 'lucide-react';
+import { Trophy, RefreshCw, Volume2, VolumeX, Zap, SkipForward, X, Lightbulb } from 'lucide-react';
 import { GameAIProvider, useGameAI } from './components/GameAIProvider';
-
-interface soundType {
-  correct: HTMLAudioElement;
-  wrong: HTMLAudioElement;
-  hint: HTMLAudioElement;
-  tick: HTMLAudioElement;
-  timeUp: HTMLAudioElement;
-  combo: HTMLAudioElement;
-}
 
 // Main app wrapped with the GameAIProvider
 function App() {
@@ -27,19 +17,109 @@ function App() {
   );
 }
 
+// Confirmation Modal Component
+function ConfirmationModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  title,
+  message
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  title: string;
+  message: string;
+}) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50">
+      <div className="bg-white rounded-xl shadow-xl p-6 max-w-md w-full">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-xl font-bold text-gray-900">{title}</h3>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-full hover:bg-gray-100"
+          >
+            <X className="w-5 h-5 text-gray-500" />
+          </button>
+        </div>
+        <p className="text-gray-600 mb-6">{message}</p>
+        <div className="flex justify-end gap-3">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => {
+              onConfirm();
+              onClose();
+            }}
+            className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600"
+          >
+            Enable AI Mode
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Interactive AI Hint Component
+function AIHintModal({
+  isOpen,
+  onClose,
+  hint
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  hint: string;
+}) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50">
+      <div className="bg-white rounded-xl shadow-xl p-6 max-w-md w-full">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            <Lightbulb className="w-5 h-5 text-yellow-500" />
+            AI Hint
+          </h3>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-full hover:bg-gray-100"
+          >
+            <X className="w-5 h-5 text-gray-500" />
+          </button>
+        </div>
+        <p className="text-gray-700 mb-6 italic">{hint}</p>
+        <div className="flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600"
+          >
+            Got it!
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Separate component for the game content to access the GameAIContext
 function GameContent() {
   // Get AI features from context
-  const { 
-    getNextAIPuzzle, 
-    getModeratorResponse, 
-    aiEnabled, 
-    toggleAI 
+  const {
+    getNextAIPuzzle,
+    getModeratorResponse,
+    getAIHint,
+    aiEnabled,
+    toggleAI
   } = useGameAI();
 
-  // Track used puzzles to avoid repetition in a single game session
-  const [usedPuzzleIndices, setUsedPuzzleIndices] = useState<number[]>([]);
-  const [currentPuzzleIndex, setCurrentPuzzleIndex] = useState<number>(-1);
   const [score, setScore] = useState(0);
   const [timeLeft, setTimeLeft] = useState(60);
   const [hintsRemaining, setHintsRemaining] = useState(3);
@@ -49,67 +129,37 @@ function GameContent() {
   const [isSoundOn, setIsSoundOn] = useState(true);
   const [showConfetti, setShowConfetti] = useState(false);
   const [puzzlesCompleted, setPuzzlesCompleted] = useState(0);
-  
-  // For AI puzzles
-  const [currentAIPuzzle, setCurrentAIPuzzle] = useState<any>(null);
-  const [usingAIPuzzle, setUsingAIPuzzle] = useState(false);
 
-  // Function to get a random unused puzzle index
-  const getRandomPuzzleIndex = useCallback(() => {
-    // If all puzzles have been used, try AI puzzles or consider the game won
-    if (usedPuzzleIndices.length >= puzzles.length) {
-      if (aiEnabled) {
-        // Try to get an AI puzzle
-        const aiPuzzle = getNextAIPuzzle();
-        if (aiPuzzle) {
-          setCurrentAIPuzzle(aiPuzzle);
-          setUsingAIPuzzle(true);
-          return -1; // Signal that we're using an AI puzzle
-        }
-      }
-      setGameStatus('won');
-      return -1;
+  // For AI puzzles
+  const [currentPuzzle, setCurrentPuzzle] = useState<any>(null);
+
+  // For AI hints
+  const [aiHint, setAiHint] = useState('');
+  const [showAiHintModal, setShowAiHintModal] = useState(false);
+  const [wrongGuessCount, setWrongGuessCount] = useState(0);
+
+  // Modal state
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  // Get a new AI puzzle
+  const getNewPuzzle = useCallback(() => {
+    const newPuzzle = getNextAIPuzzle();
+    if (newPuzzle) {
+      setCurrentPuzzle(newPuzzle);
+      return true;
     }
-    
-    // Filter out already used indices
-    const availableIndices = [...Array(puzzles.length).keys()]
-      .filter(index => !usedPuzzleIndices.includes(index));
-    
-    // Select a random index from available ones
-    const randomIndex = availableIndices[Math.floor(Math.random() * availableIndices.length)];
-    setUsingAIPuzzle(false);
-    return randomIndex;
-  }, [usedPuzzleIndices, aiEnabled, getNextAIPuzzle]);
+    return false;
+  }, [getNextAIPuzzle]);
 
   // Initialize the first puzzle when component mounts
   useEffect(() => {
-    if (currentPuzzleIndex === -1) {
-      // Randomly decide if we want to start with an AI puzzle (25% chance)
-      const useAIPuzzle = aiEnabled && Math.random() < 0.95;
-      
-      if (useAIPuzzle) {
-        const aiPuzzle = getNextAIPuzzle();
-        if (aiPuzzle) {
-          setCurrentAIPuzzle(aiPuzzle);
-          setUsingAIPuzzle(true);
-        } else {
-          // Fallback to regular puzzle if AI puzzle not available
-          const firstPuzzleIndex = getRandomPuzzleIndex();
-          setCurrentPuzzleIndex(firstPuzzleIndex);
-          setUsedPuzzleIndices([firstPuzzleIndex]);
-        }
-      } else {
-        const firstPuzzleIndex = getRandomPuzzleIndex();
-        setCurrentPuzzleIndex(firstPuzzleIndex);
-        setUsedPuzzleIndices([firstPuzzleIndex]);
+    if (!currentPuzzle) {
+      if (!getNewPuzzle()) {
+        // If no puzzle is available, set game status to 'won' to show end screen
+        setGameStatus('won');
       }
     }
-  }, [currentPuzzleIndex, getRandomPuzzleIndex, aiEnabled, getNextAIPuzzle]);
-
-  // Get the current puzzle (either from predefined list or AI-generated)
-  const currentPuzzle = usingAIPuzzle 
-    ? currentAIPuzzle 
-    : (currentPuzzleIndex >= 0 ? puzzles[currentPuzzleIndex] : puzzles[0]);
+  }, [currentPuzzle, getNewPuzzle]);
 
   useEffect(() => {
     if (timeLeft === 0 && gameStatus === 'playing') {
@@ -118,64 +168,106 @@ function GameContent() {
   }, [timeLeft, gameStatus]);
 
   const handleGuess = (guess: string) => {
+    if (!currentPuzzle) return;
+
     const correctWords = currentPuzzle.answer.toLowerCase().split(' ');
     const guessWords = guess.toLowerCase().split(' ');
-    
-    const correctWordCount = guessWords.filter(word => 
+
+    const correctWordCount = guessWords.filter(word =>
       correctWords.includes(word)
     ).length;
-  
+
     if (guess.toLowerCase() === currentPuzzle.answer.toLowerCase()) {
       const timeBonus = Math.floor(timeLeft * 0.5);
       const hintPenalty = (3 - hintsRemaining) * 5;
       const puzzleScore = 100 + timeBonus - hintPenalty;
-      
+
       setScore(score + puzzleScore);
-      
+
       // Use AI moderator response for correct answer
-      const moderatorResponse = aiEnabled ? getModeratorResponse('correct') : 'Correct!';
+      const moderatorResponse = getModeratorResponse('correct');
       setFeedback(`${moderatorResponse} +${puzzleScore} points`);
       setPuzzlesCompleted(puzzlesCompleted + 1);
-      
+
       // Trigger confetti on correct answer
       setShowConfetti(true);
-      
-      // Check if all puzzles have been used and no AI puzzles available
-      if (usedPuzzleIndices.length >= puzzles.length - 1 && (!aiEnabled || !getNextAIPuzzle())) {
-        setGameStatus('won');
-      } else {
-        setTimeout(() => {
-          // Get next random puzzle that hasn't been used yet
-          const nextPuzzleIndex = getRandomPuzzleIndex();
-          
-          if (!usingAIPuzzle) {
-            setCurrentPuzzleIndex(nextPuzzleIndex);
-            if (nextPuzzleIndex !== -1) {
-              setUsedPuzzleIndices([...usedPuzzleIndices, nextPuzzleIndex]);
-            }
-          }
-          
+
+      // Play correct sound
+      playSound('correct');
+
+      // Reset wrong guess counter
+      setWrongGuessCount(0);
+
+      setTimeout(() => {
+        // Get next AI puzzle
+        if (!getNewPuzzle()) {
+          setGameStatus('won');
+        } else {
           setTimeLeft(60);
           setHintsRemaining(3);
           setRevealedIndices([]);
           setFeedback('');
           setShowConfetti(false);
-        }, 3000);
-      }
+        }
+      }, 3000);
     } else if (correctWordCount > 0) {
       // Use AI moderator response for close answer
-      const moderatorResponse = aiEnabled ? getModeratorResponse('close') : 'Close!';
+      const moderatorResponse = getModeratorResponse('close');
       setFeedback(`${moderatorResponse} You got ${correctWordCount} word(s) right`);
-      
+
+      // Play wrong sound for close answers
+      playSound('wrong');
+
+      // Increment wrong guess counter
+      setWrongGuessCount(wrongGuessCount + 1);
+
+      // Offer AI hint if they've made multiple wrong guesses
+      if (wrongGuessCount >= 2) {
+        // Initialize the hint with a placeholder
+        setAiHint("I'm thinking of a clever hint for you...");
+
+        // Show the hint modal after feedback clears
+        setTimeout(() => {
+          setShowAiHintModal(true);
+
+          // Request the AI hint and update the modal when it's ready
+          getAIHint(currentPuzzle.answer, guess, currentPuzzle.category, (hint) => {
+            setAiHint(hint);
+          });
+        }, 3500);
+      }
+
       // Clear feedback after 3 seconds for wrong answers
       setTimeout(() => {
         setFeedback('');
       }, 3000);
     } else {
       // Use AI moderator response for wrong answer
-      const moderatorResponse = aiEnabled ? getModeratorResponse('wrong') : 'Try again!';
+      const moderatorResponse = getModeratorResponse('wrong');
       setFeedback(moderatorResponse);
-      
+
+      // Play wrong sound
+      playSound('wrong');
+
+      // Increment wrong guess counter
+      setWrongGuessCount(wrongGuessCount + 1);
+
+      // Offer AI hint if they've made multiple wrong guesses
+      if (wrongGuessCount >= 2) {
+        // Initialize the hint with a placeholder
+        setAiHint("I'm thinking of a clever hint for you...");
+        
+        // Show the hint modal after feedback clears
+        setTimeout(() => {
+          setShowAiHintModal(true);
+          
+          // Request the AI hint and update the modal when it's ready
+          getAIHint(currentPuzzle.answer, guess, currentPuzzle.category, (hint) => {
+            setAiHint(hint);
+          });
+        }, 3500);
+      }
+
       // Clear feedback after 3 seconds for wrong answers
       setTimeout(() => {
         setFeedback('');
@@ -194,7 +286,7 @@ function GameContent() {
 
   const playSound = useCallback((soundName: keyof typeof sounds) => {
     if (!isSoundOn) return;
-    
+
     const sound = sounds[soundName];
     if (sound) {
       // Reset the audio to the beginning if it's already playing
@@ -203,25 +295,16 @@ function GameContent() {
     }
   }, [isSoundOn, sounds]);
 
-  // Add sound usage to feedback and game events
-  useEffect(() => {
-    if (feedback.includes('Correct') || feedback.includes('Brilliant') || feedback.includes('Amazing')) {
-      playSound('correct');
-    } else if (feedback.includes('Close') || feedback.includes('Almost')) {
-      playSound('wrong');
-    } else if (feedback.includes('Try again') || feedback.includes('Not quite')) {
-      playSound('wrong');
-    }
-  }, [feedback, playSound]);
-
   const requestHint = () => {
+    if (!currentPuzzle) return;
+
     playSound('hint');
     if (hintsRemaining > 0) {
       const unrevealedIndices = currentPuzzle.answer
-          .split('')
-          .map((_:string, i:number) => i)
-          .filter((i: number) => !revealedIndices.includes(i) && currentPuzzle.answer[i] !== ' ');
-      
+        .split('')
+        .map((_: string, i: number) => i)
+        .filter((i: number) => !revealedIndices.includes(i) && currentPuzzle.answer[i] !== ' ');
+
       if (unrevealedIndices.length > 0) {
         const randomIndex = unrevealedIndices[Math.floor(Math.random() * unrevealedIndices.length)];
         setRevealedIndices([...revealedIndices, randomIndex]);
@@ -231,28 +314,7 @@ function GameContent() {
   };
 
   const resetGame = () => {
-    // Get a fresh random puzzle to start
-    const useAIPuzzle = aiEnabled && Math.random() < 0.25;
-    
-    if (useAIPuzzle) {
-      const aiPuzzle = getNextAIPuzzle();
-      if (aiPuzzle) {
-        setCurrentAIPuzzle(aiPuzzle);
-        setUsingAIPuzzle(true);
-      } else {
-        // Fallback to regular puzzle if AI puzzle not available
-        const firstPuzzleIndex = Math.floor(Math.random() * puzzles.length);
-        setCurrentPuzzleIndex(firstPuzzleIndex);
-        setUsedPuzzleIndices([firstPuzzleIndex]);
-        setUsingAIPuzzle(false);
-      }
-    } else {
-      const firstPuzzleIndex = Math.floor(Math.random() * puzzles.length);
-      setCurrentPuzzleIndex(firstPuzzleIndex);
-      setUsedPuzzleIndices([firstPuzzleIndex]);
-      setUsingAIPuzzle(false);
-    }
-    
+    getNewPuzzle();
     setScore(0);
     setTimeLeft(60);
     setHintsRemaining(3);
@@ -261,17 +323,43 @@ function GameContent() {
     setFeedback('');
     setShowConfetti(false);
     setPuzzlesCompleted(0);
+    setWrongGuessCount(0);
   };
 
   const toggleSound = () => {
     setIsSoundOn(!isSoundOn);
   };
 
+  // Skip current puzzle
+  const skipPuzzle = () => {
+    // Apply a small score penalty for skipping
+    const skipPenalty = 10;
+    if (score >= skipPenalty) {
+      setScore(score - skipPenalty);
+    }
+
+    // Get next AI puzzle
+    getNewPuzzle();
+
+    // Reset for next puzzle
+    setTimeLeft(60);
+    setHintsRemaining(3);
+    setRevealedIndices([]);
+    setFeedback(`Skipped! -${skipPenalty} points`);
+    setShowConfetti(false);
+    setWrongGuessCount(0);
+
+    // Clear feedback after 3 seconds
+    setTimeout(() => {
+      setFeedback('');
+    }, 3000);
+  };
+
   if (gameStatus === 'won' || gameStatus === 'lost') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center p-4">
-        <Confetti 
-          active={gameStatus === 'won'} 
+        <Confetti
+          active={gameStatus === 'won'}
           intensity="high"
           duration={6000}
         />
@@ -281,12 +369,7 @@ function GameContent() {
             {gameStatus === 'won' ? 'Congratulations!' : 'Game Over!'}
           </h1>
           <p className="text-xl text-gray-600">Final Score: {score}</p>
-          {gameStatus === 'won' && (
-            <p className="text-lg text-gray-600">You completed all the puzzles!</p>
-          )}
-          {gameStatus === 'lost' && (
-            <p className="text-lg text-gray-600">Puzzles Completed: {puzzlesCompleted}</p>
-          )}
+          <p className="text-lg text-gray-600">Puzzles Completed: {puzzlesCompleted}</p>
           <button
             onClick={resetGame}
             className="inline-flex items-center gap-2 px-6 py-3 bg-purple-500 text-white rounded-full hover:bg-purple-600 transition-colors"
@@ -299,30 +382,67 @@ function GameContent() {
     );
   }
 
+  if (!currentPuzzle) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-xl shadow-2xl p-8 max-w-md w-full text-center">
+          <p className="text-xl text-gray-700">Loading puzzles...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center p-4">
+      {/* AI Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onConfirm={toggleAI}
+        title="Enable AI Mode"
+        message="This will hand over puzzle generation and moderation to AI. The AI will create unique puzzles and provide feedback on your answers. Do you want to continue?"
+      />
+
+      {/* AI Hint Modal */}
+      <AIHintModal
+        isOpen={showAiHintModal}
+        onClose={() => setShowAiHintModal(false)}
+        hint={aiHint}
+      />
+
       <div className="bg-white rounded-xl shadow-2xl p-8 max-w-2xl w-full relative">
         <WaterSimulation timeLeft={timeLeft} />
-        
+
         {/* Add confetti for correct answers */}
-        <Confetti 
-          active={showConfetti} 
+        <Confetti
+          active={showConfetti}
           duration={3000}
           onComplete={() => setShowConfetti(false)}
         />
-        
+
         <div className="relative z-10 space-y-12">
           <div className="flex justify-between items-center">
             <div className="text-2xl font-bold text-purple-500">Score: {score}</div>
             <div className="flex items-center gap-4">
-              <button 
-                onClick={toggleAI}
-                className="p-2 rounded-full hover:bg-gray-100 transition-colors"
-                title={aiEnabled ? "AI Mode: On" : "AI Mode: Off"}
+              <button
+                onClick={() => {
+                  setAiHint("I'm thinking of a clever hint for you...");
+                  setShowAiHintModal(true);
+
+                  // Get the latest guess from state or use an empty string if none
+                  const latestGuess = ""; // You might need to track the latest guess in state
+
+                  getAIHint(currentPuzzle.answer, latestGuess, currentPuzzle.category, (hint) => {
+                    setAiHint(hint);
+                  });
+                }}
+                className={`p-2 rounded-full hover:bg-gray-100 transition-colors ${wrongGuessCount >= 2 ? 'animate-pulse' : ''}`}
+                title="Get AI Hint"
+                disabled={wrongGuessCount < 2}
               >
-                <Zap className={`w-5 h-5 ${aiEnabled ? 'text-purple-500' : 'text-gray-400'}`} />
+                <Lightbulb className={`w-5 h-5 ${wrongGuessCount >= 2 ? 'text-yellow-500' : 'text-gray-300'}`} />
               </button>
-              <button 
+              <button
                 onClick={toggleSound}
                 className="p-2 rounded-full hover:bg-gray-100 transition-colors"
               >
@@ -332,53 +452,60 @@ function GameContent() {
                   <VolumeX className="w-5 h-5 text-gray-400" />
                 )}
               </button>
-              <Timer 
-                playSound={playSound} 
-                timeLeft={timeLeft} 
-                setTimeLeft={setTimeLeft} 
-                isActive={gameStatus === 'playing'} 
+              <Timer
+                playSound={playSound}
+                timeLeft={timeLeft}
+                setTimeLeft={setTimeLeft}
+                isActive={gameStatus === 'playing'}
               />
             </div>
           </div>
-          
-          <EmojiDisplay 
-            emojis={currentPuzzle.emojis} 
-            category={currentPuzzle.category} 
+
+          <EmojiDisplay
+            emojis={currentPuzzle.emojis}
+            category={currentPuzzle.category}
           />
-          
-          <HintDisplay 
+
+          <HintDisplay
             answer={currentPuzzle.answer}
             revealedIndices={revealedIndices}
             hintsRemaining={hintsRemaining}
             onRequestHint={requestHint}
           />
-          
+
           <div className="flex flex-col items-center gap-6 py-6">
-            <GuessInput 
-              onSubmit={handleGuess}
-              disabled={gameStatus !== 'playing'}
-              currentPuzzle={currentPuzzle}
-            />
-            
+            <div className="flex w-full justify-center gap-4">
+              <GuessInput
+                onSubmit={handleGuess}
+                disabled={gameStatus !== 'playing'}
+                currentPuzzle={currentPuzzle}
+              />
+
+              {/* Skip button */}
+              <button
+                onClick={skipPuzzle}
+                disabled={gameStatus !== 'playing'}
+                className="flex items-center justify-center bg-purple-100 text-purple-600 font-semibold px-4 rounded-lg hover:bg-purple-200 transition-colors"
+                title="Skip this puzzle (-10 points)"
+              >
+                <SkipForward className="w-6 h-6" />
+              </button>
+            </div>
+
             {feedback && (
-              <p className={`text-lg absolute bottom-5 pb-4 font-semibold ${
-                feedback.includes('Correct') || feedback.includes('Brilliant') || feedback.includes('Amazing') ? 'text-green-500' : 
-                feedback.includes('Close') || feedback.includes('Almost') ? 'text-yellow-500' : 
-                'text-red-500'
-              }`}>
+              <p className={`text-lg absolute bottom-5 pb-4 font-semibold ${feedback.includes('Correct') || feedback.includes('Brilliant') || feedback.includes('Amazing') ? 'text-green-500' :
+                  feedback.includes('Close') || feedback.includes('Almost') ? 'text-yellow-500' :
+                    'text-red-500'
+                }`}>
                 {feedback}
               </p>
             )}
           </div>
 
           <div className="text-center text-sm text-gray-500 mt-8">
-            {usingAIPuzzle ? (
-              <span className="inline-flex items-center gap-1">
-                AI-Generated Puzzle <Zap className="w-3 h-3 text-purple-500" />
-              </span>
-            ) : (
-              `Puzzle ${puzzlesCompleted + 1} of ${puzzles.length}`
-            )}
+            <span className="inline-flex items-center gap-1">
+              AI-Generated Puzzle <Zap className="w-3 h-3 text-purple-500" />
+            </span>
           </div>
         </div>
       </div>
